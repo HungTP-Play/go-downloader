@@ -86,24 +86,49 @@ func NewDownloaderWithConfig(config DownloaderConfig) *Downloader {
 
 type DownloadOption func(*Downloader)
 
+// Config the maximum of retry times for file
+//
+// If some error occurs when downloading a file, entire file will be re-downloaded.
+//
+// Default is 5.
 func WithMaxRetries(maxRetries int) DownloadOption {
 	return func(d *Downloader) {
 		d.config.MaxRetries = maxRetries
 	}
 }
 
+// Config the maximum of concurrent downloads
+//
+// If `MaxConcurrentDownloads` is -1, mean that all the chunks will be downloaded concurrently.
+//
+// If `MaxConcurrentDownloads` is greater than 0, mean that
+// the chunks will be downloaded concurrently by `MaxConcurrentDownloads` goroutines.
 func WithMaxConcurrentDownloads(maxConcurrentDownloads int) DownloadOption {
 	return func(d *Downloader) {
 		d.config.MaxConcurrentDownloads = maxConcurrentDownloads
 	}
 }
 
+// Config the function determines how many chunks will be split.
+//
+// You can use the default function `DefaultPartDeterminer` or write your own function.
+//
+// You should prefer using this option over `ChunkSizeDeterminer`.
+//
+// You should use `WithPartDeterminerFunc` either `WithChunkSizeDeterminerFunc`, not both.
 func WithPartDeterminerFunc(partDeterminerFunc PartDeterminer) DownloadOption {
 	return func(d *Downloader) {
 		d.config.PartDeterminerFunc = partDeterminerFunc
 	}
 }
 
+// Config the function determines the size of each chunk.
+//
+// You can use the default function `DefaultChunkSizeDeterminer` or write your own function.
+//
+// You should prefer using `WithPartDeterminerFunc` over this option.
+//
+// You should use `WithPartDeterminerFunc` either `WithChunkSizeDeterminerFunc`, not both.
 func WithChunkSizeDeterminerFunc(chunkSizeDeterminerFunc ChunkSizeDeterminer) DownloadOption {
 	return func(d *Downloader) {
 		d.config.ChunkSizeDeterminerFunc = chunkSizeDeterminerFunc
