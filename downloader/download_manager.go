@@ -1,9 +1,10 @@
-package godownloader
+package downloader
 
 import (
 	"context"
 	"io"
 	"net/http"
+	"strconv"
 	"sync"
 )
 
@@ -12,12 +13,10 @@ import (
 // The man who controls the download process
 type downloadManager struct {
 	ctx context.Context
-	cfg DownloaderConfig
+	cfg *DownloaderConfig
 
 	url      string
 	filename string
-	numParts int64
-	batchs   []DownloadChunk
 
 	writer WriteAtWriter
 	wg     sync.WaitGroup
@@ -75,6 +74,11 @@ func (dm *downloadManager) AddWritten(written int64) {
 
 func (dm *downloadManager) doHeadRequest(url string) (int64, error) {
 	resp, err := http.Head(url)
+	// Is Response != 200 return error
+	if resp.StatusCode == http.StatusMethodNotAllowed || resp.StatusCode == http.StatusForbidden {
+		return 0, &DownloadError{Message: "Response status code is not 200", Err: http.ErrNotSupported}
+	}
+
 	if err != nil {
 		return 0, err
 	}
@@ -82,9 +86,51 @@ func (dm *downloadManager) doHeadRequest(url string) (int64, error) {
 	return resp.ContentLength, nil
 }
 
+// Use when some source not support HEAD request
+//
+// Get file size by calling GET request with Range: bytes=0-0
+//
+// And return the size of the file in the Content-Range header
+func (dm *downloadManager) doGetZero(url string) (int64, error) {
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return 0, &DownloadError{Message: "Failed to create request", Err: err}
+	}
+
+	req.Header.Set("Range", "bytes=0-0")
+	resp, err := http.DefaultClient.Do(req)
+	// Is Response != 206 return error
+	if resp.StatusCode != http.StatusPartialContent {
+		return 0, &DownloadError{Message: "Response status code is not 206", Err: err}
+	}
+
+	if err != nil {
+		return 0, &DownloadError{Message: "Failed to do request", Err: err}
+	}
+
+	contentRange := resp.Header.Get("Content-Range")
+	fileSize := contentRange[len("bytes 0-0/"):]
+	size, err := strconv.ParseInt(fileSize, 10, 64)
+	if err != nil {
+		return 0, &DownloadError{Message: "Failed to parse file size", Err: err}
+	}
+	return size, nil
+}
+
 // Get file size by calling HEAD request
 func (dm *downloadManager) getFileSize(url string) (int64, error) {
 	size, err := dm.doHeadRequest(url)
+	if err, ok := err.(*DownloadError); ok {
+		if err.Err != http.ErrNotSupported {
+			size, getErr := dm.doGetZero(url)
+			if getErr != nil {
+				return 0, &DownloadError{Message: "Failed to get file size", Err: err}
+			}
+
+			return size, nil
+		}
+	}
+
 	if err != nil {
 		// If 416, the server does not support range requests
 		if err == http.ErrNotSupported {
@@ -211,7 +257,6 @@ func (dm *downloadManager) downloadBatch(batch []DownloadChunk) {
 	defer dm.wg.Done()
 
 	for i := 0; i < len(batch); i++ {
-		dm.wg.Add(1)
 		num, err := dm.downloadChunk(&batch[i])
 		if err != nil {
 			dm.SetError(err)
@@ -219,11 +264,23 @@ func (dm *downloadManager) downloadBatch(batch []DownloadChunk) {
 		}
 		dm.AddWritten(num)
 	}
-	dm.wg.Wait()
 }
 
 // Download the chunk
 func (dm *downloadManager) downloadChunk(chunk *DownloadChunk) (int64, error) {
+	var num int64
+	var err error
+	for i := 0; i < dm.cfg.MaxRetries; i++ {
+		num, err = dm.tryDownloadChunk(chunk)
+		if err == nil {
+			return num, nil
+		}
+	}
+	return num, err
+}
+
+// Try to download the chunk
+func (dm *downloadManager) tryDownloadChunk(chunk *DownloadChunk) (int64, error) {
 	req, err := http.NewRequest("GET", dm.url, nil)
 	if err != nil {
 		return 0, &DownloadError{Message: "Failed to create request", Err: err}
@@ -242,7 +299,7 @@ func (dm *downloadManager) downloadChunk(chunk *DownloadChunk) (int64, error) {
 		return 0, &DownloadError{Message: "Failed to download chunk", Err: err}
 	}
 
-	num, err := io.Copy(chunk.writer.(io.Writer), resp.Body)
+	num, err := io.Copy(chunk, resp.Body)
 	if err != nil {
 		return 0, &DownloadError{Message: "Failed to write chunk", Err: err}
 	}

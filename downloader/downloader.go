@@ -1,4 +1,4 @@
-package godownloader
+package downloader
 
 import (
 	"context"
@@ -180,6 +180,6 @@ func (d *Downloader) DownloadWithContext(ctx context.Context, url string, filena
 	defer file.Close()
 	fw := &FileWriter{file: file}
 
-	downloadManager := &downloadManager{ctx: ctx, url: url, filename: filename, writer: fw, cfg: d.config}
+	downloadManager := &downloadManager{ctx: ctx, url: url, filename: filename, writer: fw, cfg: &d.config}
 	return downloadManager.download()
 }
