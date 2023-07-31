@@ -1,5 +1,9 @@
 package godownloader
 
+import (
+	"context"
+)
+
 type DownloaderConfig struct {
 	// The maximum of retry times for file
 	//
@@ -33,6 +37,13 @@ type DownloaderConfig struct {
 	//
 	// You should use `PartDeterminerFunc` either `ChunkSizeDeterminerFunc`, not both.
 	ChunkSizeDeterminerFunc ChunkSizeDeterminer
+
+	// The size of each chunk
+	//
+	// If it is set greater than 0, mean that the chunks will be downloaded by the given size.
+	//
+	// Otherwise, the chunks will be downloaded by the size determined by `PartDeterminerFunc` if given, then `ChunkSizeDeterminerFunc`.
+	ChunkSize int64
 }
 
 type Downloader struct {
@@ -75,6 +86,13 @@ func defaultDownloaderConfiguration() DownloaderConfig {
 }
 
 // Return new Downloader with default configuration
+//
+// Default configuration:
+//
+//	MaxRetries: 5
+//	MaxConcurrentDownloads: -1
+//	PartDeterminerFunc: defaultPartDeterminer
+//	ChunkSizeDeterminerFunc: defaultChunkSizeDeterminer
 func NewDownloader() *Downloader {
 	return NewDownloaderWithConfig(defaultDownloaderConfiguration())
 }
@@ -142,4 +160,26 @@ func NewWithOptions(options ...DownloadOption) *Downloader {
 		option(downloader)
 	}
 	return downloader
+}
+
+// ---------------------------- Implement IDownloader ----------------------------
+
+// Download the file from the given url and save it to the given filename.
+func (d *Downloader) Download(url string, filename string) (int64, error) {
+	return d.DownloadWithContext(context.Background(), url, filename)
+}
+
+// Download the file from the given url and save it to the given filename.
+//
+// The context is used to cancel the download operation.
+func (d *Downloader) DownloadWithContext(ctx context.Context, url string, filename string) (int64, error) {
+	file, err := createFile(filename)
+	if err != nil {
+		return 0, err
+	}
+	defer file.Close()
+	fw := &FileWriter{file: file}
+
+	downloadManager := &downloadManager{ctx: ctx, url: url, filename: filename, writer: fw, cfg: d.config}
+	return downloadManager.download()
 }

@@ -1,5 +1,10 @@
 package godownloader
 
+import (
+	"context"
+	"fmt"
+)
+
 // WriteAt is the interface that wraps the basic WriteAt method.
 type WriteAtWriter interface {
 	// WriteAt writes len(p) bytes from p to the underlying data stream at offset off.
@@ -17,3 +22,22 @@ type PartDeterminer func(int64) int64
 //
 // The parameter is the total size of the file.
 type ChunkSizeDeterminer func(int64) int64
+
+type IDownloader interface {
+	// Download the file from the given url and save it to the given filename.
+	Download(url string, filename string) error
+
+	// Download the file from the given url and save it to the given filename with the given context.
+	//
+	// You should not give a nil context.
+	DownloadWithContext(ctx context.Context, url string, filename string) error
+}
+
+type DownloadError struct {
+	Message string
+	Err     error
+}
+
+func (e *DownloadError) Error() string {
+	return fmt.Sprintf("DownloadError{Message=%s, Err=%s}", e.Message, e.Err)
+}
